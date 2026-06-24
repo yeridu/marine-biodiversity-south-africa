@@ -1,0 +1,352 @@
+---
+title: "Teleost richness and relative abundance at a reef and a sandy site in Plettenberg Bay -- deployment-level analysis"
+author: "Mario Morales"
+date: "2026-06-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, results = "asis")
+```
+
+<!--
+=================================================================================
+morales_teleost6.Rmd -- deployment-level analysis of the 2024 Plettenberg Bay BRUV survey.
+
+WHY THIS VERSION EXISTS
+The raw file (fishdata.xlsx) has 98 rows, but these are GoPro video CHAPTERS, not
+independent deployments. Hanna's deployment log and chapter crosswalk confirm 18 usable
+deployments (14 Jacob's Reef, 4 Meidebank). The correct observational unit is the
+DEPLOYMENT. Species MaxN for a deployment is the MAXIMUM across that deployment's chapters,
+never the sum. Two deployments are valid biological zeros (no fish): 0071 and 0085.
+
+DESIGN CONSTRAINT
+One fixed reef site and one fixed sandy site: site, habitat, depth and MPA status are
+confounded and habitat is NOT replicated. Analyses are therefore DESCRIPTIVE and
+site-specific. No general habitat / MPA / seasonal inference is made.
+
+MODULARITY
+read_fishdata() -> build_crosswalk() -> aggregate_maxn() -> build_matrix() are written as
+reusable functions so Keyleigh's 2025 data (replicated rocky/sandy locations) can be ingested
+later with the same pipeline (see Keyleigh2025_Integration_Handoff.md).
+
+OUTPUTS: data/processed/*_v6.csv ; output/v6_* ; figures/v6_* ; output/v6_VERIFICATION_LOG.txt
+=================================================================================
+-->
+
+# 0. Setup, configuration, and modular functions
+
+```{r config}
+suppressPackageStartupMessages({
+  library(tidyverse); library(readxl); library(vegan)
+  library(here); library(officer); library(flextable)
+})
+set.seed(42)
+dir.create(here("output"), showWarnings = FALSE); dir.create(here("figures"), showWarnings = FALSE)
+dir.create(here("data","processed"), showWarnings = FALSE, recursive = TRUE)
+verif <- character(0); add_check <- function(msg, ok) { verif[[length(verif)+1]] <<- sprintf("[%s] %s", ifelse(ok,"PASS","FAIL"), msg); stopifnot(ok) }
+
+# ---- The 25 valid teleost species (explicit whitelist) + verified metadata -----
+lookup <- tribble(
+  ~species,                        ~common,             ~family,            ~status,
+  "Sarpa salpa",                   "Strepie",           "Sparidae",         "LC",
+  "Diplodus capensis",             "Blacktail",         "Sparidae",         "LC",
+  "Spondyliosoma emarginatum",     "Steentjie",         "Sparidae",         "LC",
+  "Chrysoblephus laticeps",        "Roman",             "Sparidae",         "LC",
+  "Boopsoidea inornata",           "Fransmadam",        "Sparidae",         "LC",
+  "Lithognathus mormyrus",         "Sand steenbras",    "Sparidae",         "LC",
+  "Pomadasys olivaceum",           "Pinky",             "Haemulidae",       "LC",
+  "Rhabdosargus globiceps",        "White stumpnose",   "Sparidae",         "VU",
+  "Rhabdosargus sarba",            "Natal stumpnose",   "Sparidae",         "LC",
+  "Rhabdosargus holubi",           "Cape stumpnose",    "Sparidae",         "LC",
+  "Lithognathus lithognathus",     "White steenbras",   "Sparidae",         "EN",
+  "Liza dumerili",                 "Southern mullet",   "Mugilidae",        "LC",
+  "Clinus superciliosus",          "Super klipfish",    "Clinidae",         "LC",
+  "Cheilodactylus fasciatus",      "Redfingers",        "Cheilodactylidae", "LC",
+  "Cheimerius nufar",              "Santer",            "Sparidae",         "DD",
+  "Galeichthys feliceps",          "White sea catfish", "Ariidae",          "LC",
+  "Mugil cephalus",                "Flathead mullet",   "Mugilidae",        "LC",
+  "Chirodactylus brachydactylus",  "Twotone fingerfin", "Chirodactylidae",  "LC",
+  "Pachymetopon aeneum",           "Blue hottentot",    "Sparidae",         "LC",
+  "Argyrozona argyrozona",         "Carpenter",         "Sparidae",         "LC",
+  "Amblyrhynchotes honckenii",     "Evileye blaasop",   "Tetraodontidae",   "LC",
+  "Dichistius multifasciatus",     "Banded galjoen",    "Dichistiidae",     "LC",
+  "Gymnocrotaphus curvidens",      "Janbruin",          "Sparidae",         "LC",
+  "Diplodus hottentotus",          "Zebra",             "Sparidae",         "LC",
+  "Caffrogobius nudiceps",         "Barehead goby",     "Gobiidae",         "LC")
+species_whitelist <- lookup$species
+
+# ---- Authoritative deployment roster (Hanna's Q&A Table 1): expected verification --
+# date | site(raw) | recording suffix | n chapters | note
+expected_dep <- tribble(
+  ~dep, ~date,         ~site_raw,    ~suffix, ~n_chapters, ~note,
+  1,   "2024-02-14", "Meidebank",  "0078", 2,  "",
+  2,   "2024-02-23", "Jacobs",     "0084", 7,  "",
+  3,   "2024-03-01", "Jacobs",     "0088", 6,  "",
+  4,   "2024-03-06", "Jacobs",     "0090", 6,  "",
+  5,   "2024-03-06", "Meidebank",  "0105", 1,  "GX camera; separate from Dep 12",
+  6,   "2024-03-15", "Jacobs",     "0095", 5,  "lat 32->34 corrected",
+  7,   "2024-03-26", "Jacobs",     "0098", 7,  "lat 32->34 corrected",
+  8,   "2024-04-04", "Meidebank",  "0100", 4,  "",
+  9,   "2024-04-04", "Jacobs",     "0101", 1,  "short/incomplete; separate from 0102",
+  10,  "2024-04-04", "Jacobs",     "0102", 4,  "",
+  11,  "2024-04-18", "Jacobs",     "0104", 7,  "",
+  12,  "2024-04-23", "Jacobs",     "0105", 6,  "GH camera; separate from Dep 5",
+  13,  "2024-05-01", "Jacobs",     "0107", 7,  "",
+  14,  "2024-08-22", "Meidebank",  "0071", 7,  "BIOLOGICAL ZERO",
+  15,  "2024-08-27", "Jacobs",     "0072", 10, "",
+  16,  "2024-09-02", "Jacobs",     "0073", 8,  "",
+  17,  "2024-10-25", "Jacobs",     "0085", 8,  "BIOLOGICAL ZERO",
+  18,  "2024-12-02", "Jacobs",     "0093", 2,  "date confirmed from deployment log")
+bio_zero_suffix <- c("0071","0085")
+
+# ---- Modular functions ---------------------------------------------------------
+# Read the chapter-level fish data and normalise identifiers/metadata.
+read_fishdata <- function(path) {
+  raw <- readxl::read_excel(path, sheet = "data", .name_repair = "minimal")
+  names(raw) <- trimws(names(raw))
+  sp <- names(raw)[15:39]
+  stopifnot(setequal(sp, species_whitelist))            # exactly the 25 species, no Row-ID/metadata
+  tib <- tibble(
+    chapter   = trimws(as.character(raw[["Name"]])),
+    date_raw  = trimws(as.character(raw[["Date"]])),
+    site_raw  = trimws(as.character(raw[["Location"]])),
+    temp      = suppressWarnings(as.numeric(raw[["Temp"]])),
+    season_raw= trimws(as.character(raw[["Season"]])))
+  # corrections (documented): incomplete December date -> 2024-12-02
+  tib$date_raw[tib$date_raw == "2024_12"] <- "2024_12_02"
+  tib$date  <- as.Date(tib$date_raw, format = "%Y_%m_%d")
+  tib$camera<- substr(tib$chapter, 1, 2)                 # GH or GX
+  tib$suffix<- sub("^G[HX][0-9]{2}([0-9]{4})$", "\\1", tib$chapter)
+  # site -> reader-facing label (local names retained once in the manuscript Methods)
+  tib$site  <- dplyr::recode(tib$site_raw, "Jacobs" = "Reef", "Meidebank" = "Sandy")
+  spdf <- raw[, sp]                                      # tibble preserves species names (with spaces)
+  spdf[] <- lapply(spdf, function(x){ x <- suppressWarnings(as.numeric(x)); x[is.na(x)] <- 0; x })
+  dplyr::bind_cols(tib, spdf)
+}
+
+# Build the chapter -> deployment crosswalk. Deployment identity = date + site + suffix
+# (this naturally separates the two 0105 deployments by date and site).
+build_crosswalk <- function(chapters) {
+  cw <- chapters |>
+    mutate(deployment_key = paste(format(date, "%Y-%m-%d"), site_raw, suffix, sep = "|")) |>
+    group_by(deployment_key) |>
+    mutate(deployment_id = cur_group_id()) |> ungroup()
+  # order deployment_id by date then site for stable, report-friendly numbering
+  ord <- cw |> distinct(deployment_key, date, site_raw) |> arrange(date, site_raw) |>
+    mutate(dep = row_number())
+  cw |> select(-deployment_id) |> left_join(select(ord, deployment_key, dep), by = "deployment_key")
+}
+
+# Aggregate chapters to one row per deployment: species MaxN = MAX across chapters (never sum).
+aggregate_maxn <- function(cw) {
+  sp <- species_whitelist
+  meta <- cw |> group_by(dep) |>
+    summarise(date = first(date), site_raw = first(site_raw), site = first(site),
+              suffix = first(suffix), camera = first(camera),
+              n_chapters = n(), temp = suppressWarnings(max(temp, na.rm = TRUE)),
+              .groups = "drop") |>
+    mutate(temp = ifelse(is.finite(temp), temp, NA_real_)) |> arrange(dep)
+  mat <- cw |> group_by(dep) |> summarise(across(all_of(sp), ~ max(.x, na.rm = TRUE)), .groups = "drop") |> arrange(dep)
+  list(meta = meta, mat = mat)
+}
+```
+
+# 1. Read data, build and VERIFY the deployment crosswalk
+
+```{r crosswalk}
+chapters <- read_fishdata(here("data","raw","fishdata_2024_chapters.xlsx"))
+add_check(sprintf("Chapter rows read = %d (expected 98)", nrow(chapters)), nrow(chapters) == 98)
+
+cw <- build_crosswalk(chapters)
+dep_seen <- cw |> distinct(dep, date, site_raw, suffix) |>
+  left_join(cw |> count(dep, name = "n_chapters"), by = "dep") |> arrange(dep)
+
+add_check(sprintf("Deployments after crosswalk = %d (expected 18)", nrow(dep_seen)), nrow(dep_seen) == 18)
+site_counts <- dep_seen |> count(site_raw)
+add_check("Site split = 14 Jacob's Reef / 4 Meidebank",
+          setequal(paste(site_counts$site_raw, site_counts$n), c("Jacobs 14","Meidebank 4")))
+add_check("Every chapter maps to exactly one deployment", all(!is.na(cw$dep)) && nrow(cw) == 98)
+
+# Verify the derived crosswalk against Hanna's authoritative Table 1 (date, site, suffix, n chapters)
+chk <- dep_seen |> mutate(date = format(date, "%Y-%m-%d")) |>
+  select(date, site_raw, suffix, n_chapters) |> arrange(date, site_raw, suffix)
+exp <- expected_dep |> select(date, site_raw, suffix, n_chapters) |> arrange(date, site_raw, suffix)
+add_check("Derived crosswalk matches Hanna's Table 1 exactly (date/site/suffix/chapter count)",
+          isTRUE(all.equal(as.data.frame(chk), as.data.frame(exp))))
+add_check("Two distinct 0105 deployments retained (Meidebank GX vs Jacob's GH)",
+          sum(dep_seen$suffix == "0105") == 2)
+add_check("0101 and 0102 are separate deployments", all(c("0101","0102") %in% dep_seen$suffix))
+
+readr::write_csv(cw |> select(dep, chapter, camera, suffix, date, site_raw, site),
+                 here("data","processed","deployment_chapter_crosswalk_v6.csv"))
+cat("**Crosswalk built and verified: 98 video chapters -> 18 deployments (14 Reef, 4 Sandy).**\n\n")
+print(knitr::kable(dep_seen |> mutate(date = format(date,"%Y-%m-%d")) |>
+  transmute(Dep = dep, Date = date, Site = recode(site_raw,"Jacobs"="Reef","Meidebank"="Sandy"),
+            Recording = suffix, Chapters = n_chapters)))
+```
+
+# 2. Aggregate to deployment level (MaxN = maximum across chapters) and VERIFY
+
+```{r aggregate}
+agg <- aggregate_maxn(cw); meta <- agg$meta; mat <- agg$mat
+biota <- as.data.frame(mat[, species_whitelist], check.names = FALSE); rownames(biota) <- meta$dep
+
+add_check(sprintf("Deployment-level matrix has 18 rows, 25 species (got %dx%d)", nrow(biota), ncol(biota)),
+          nrow(biota) == 18 && ncol(biota) == 25)
+add_check("No Row-ID / metadata column in the species matrix", !("Row-ID" %in% names(biota)))
+
+# MaxN rule check: every deployment x species value equals the MAX of its chapter values (never sum)
+recompute <- cw |> group_by(dep) |> summarise(across(all_of(species_whitelist), ~ max(.x)), .groups="drop") |> arrange(dep)
+add_check("Deployment MaxN == max(chapter MaxN) for all deployment x species (0 discrepancies)",
+          isTRUE(all.equal(as.data.frame(recompute[,species_whitelist]), as.data.frame(mat[,species_whitelist]))))
+# Worked example from Hanna: Dep 0084 (Reef) White Steenbras = 4 (not 9)
+d84 <- which(meta$suffix == "0084")
+add_check("Worked example: Dep 0084 White steenbras MaxN = 4 (sum would be 9)",
+          biota[d84, "Lithognathus lithognathus"] == 4)
+# Biological zeros retained as valid all-zero rows
+bz <- which(meta$suffix %in% bio_zero_suffix)
+add_check("Biological-zero deployments 0071 and 0085 present and all-zero",
+          length(bz) == 2 && all(rowSums(biota[bz, , drop=FALSE]) == 0))
+
+dep_out <- bind_cols(meta, biota)
+readr::write_csv(dep_out, here("data","processed","teleost_deployment_level_v6.csv"))
+cat("\n**Deployment-level matrix written (18 deployments x 25 species; MaxN = max across chapters).**\n\n")
+```
+
+# 3. Descriptive analysis (site-specific; no habitat/MPA/seasonal inference)
+
+```{r analysis}
+# Seasons (calendar + temperature framing), for description only
+season_of <- function(d){ m <- as.integer(format(d,"%m"))
+  dplyr::case_when(m %in% c(12,1,2)~"Summer", m %in% 3:5~"Autumn", m %in% 6:8~"Winter", m %in% 9:11~"Spring") }
+meta$season  <- factor(season_of(meta$date), levels=c("Summer","Autumn","Winter","Spring"))
+meta$thermal <- factor(ifelse(meta$season %in% c("Summer","Autumn"),"Warm (summer-autumn)","Cool (winter-spring)"))
+
+# Per-deployment richness and Shannon
+meta$richness <- specnumber(as.matrix(biota))
+meta$shannon  <- diversity(as.matrix(biota), index="shannon", base=exp(1))
+n_obs_species <- sum(colSums(biota) > 0); n_families <- lookup |> filter(species %in% names(biota)[colSums(biota)>0]) |> distinct(family) |> nrow()
+n_zero_dep    <- sum(rowSums(biota) == 0)
+
+cat(sprintf("**Effort.** %d usable deployments: %d at the Reef and %d at the Sandy site, across %d sampling dates (%s). %d deployments recorded no teleost.\n\n",
+  nrow(meta), sum(meta$site=="Reef"), sum(meta$site=="Sandy"), dplyr::n_distinct(meta$date),
+  paste0(format(min(meta$date),"%b %Y"),"-",format(max(meta$date),"%b %Y")), n_zero_dep))
+cat(sprintf("**Observed assemblage.** %d teleost species from %d families were recorded across the two sites.\n\n", n_obs_species, n_families))
+
+# Richness / Shannon summaries by site (descriptive)
+site_summ <- meta |> group_by(Site = site) |>
+  summarise(n_deployments = n(),
+            richness_median = median(richness), richness_min = min(richness), richness_max = max(richness),
+            shannon_median = round(median(shannon),2), .groups="drop")
+cat("**Per-deployment richness and Shannon by site (descriptive; all deployments shown in Figure 2).**\n\n")
+print(knitr::kable(site_summ))
+
+# Frequency of occurrence (n/N and %) and mean MaxN per site (means include valid zeros)
+idxR <- which(meta$site=="Reef"); idxS <- which(meta$site=="Sandy"); nR <- length(idxR); nS <- length(idxS)
+spp_tab <- lookup |>
+  mutate(freq_Reef  = colSums(biota[idxR, species] > 0), pct_Reef = round(100*freq_Reef/nR),
+         maxN_Reef  = round(colMeans(biota[idxR, species]), 2),
+         freq_Sandy = colSums(biota[idxS, species] > 0), pct_Sandy = round(100*freq_Sandy/nS),
+         maxN_Sandy = round(colMeans(biota[idxS, species]), 2),
+         total_MaxN = colSums(biota[, species])) |>
+  arrange(desc(total_MaxN))
+readr::write_csv(spp_tab, here("output","v6_species_site.csv"))
+
+# Between-the-two-sites difference: DESCRIPTIVE only (Cliff's delta as a descriptive effect size)
+cd <- as.data.frame(effectsize::cliffs_delta(richness ~ site, data = meta))
+cliff_rich <- as.numeric(cd[[grep("delta|rank_biserial", tolower(names(cd)))[1]]])
+cat(sprintf("\n**Between-site difference (descriptive).** Per-deployment richness was higher at the Reef (median %d, range %d-%d, n=%d) than the Sandy site (median %d, range %d-%d, n=%d); Cliff's delta = %.2f. With one fixed site per habitat and only %d sandy deployments, this is reported descriptively and is NOT generalised to a reef-versus-sand habitat effect.\n\n",
+  site_summ$richness_median[site_summ$Site=="Reef"], site_summ$richness_min[site_summ$Site=="Reef"], site_summ$richness_max[site_summ$Site=="Reef"], nR,
+  site_summ$richness_median[site_summ$Site=="Sandy"], site_summ$richness_min[site_summ$Site=="Sandy"], site_summ$richness_max[site_summ$Site=="Sandy"], nS,
+  cliff_rich, nS))
+
+# Species table (Word) -- common, scientific, family, status, occurrence n/N, mean MaxN per site
+ft <- spp_tab |> transmute(`Common name`=common, Species=species, Family=family, Status=status,
+        `Reef occ. (n/N)`=sprintf("%d/%d", freq_Reef, nR), `Reef MaxN`=maxN_Reef,
+        `Sandy occ. (n/N)`=sprintf("%d/%d", freq_Sandy, nS), `Sandy MaxN`=maxN_Sandy) |>
+  flextable() |> italic(j="Species") |> bold(part="header") |> fontsize(size=9, part="all") |> theme_booktabs() |> autofit()
+read_docx() |>
+  body_add_par("Table. Teleost species recorded at the Reef and Sandy sites: family, IUCN Red List conservation status, frequency of occurrence (number of deployments in which the species was recorded out of all usable deployments at that site), and mean deployment-level MaxN (including zero-fish deployments).", style="Normal") |>
+  body_add_flextable(ft) |>
+  body_add_par("Conservation status follows the IUCN Red List of Threatened Species (www.iucnredlist.org, accessed June 2026): DD Data Deficient, LC Least Concern, VU Vulnerable, EN Endangered. Reef n = 14 deployments; Sandy n = 4.", style="Normal") |>
+  print(target = here("output","v6_species_table.docx"))
+cat("**Species table written to output/v6_species_table.docx.**\n\n")
+print(knitr::kable(head(spp_tab |> select(common, species, family, status, freq_Reef, maxN_Reef, freq_Sandy, maxN_Sandy, total_MaxN), 8)))
+```
+
+# 4. Figures (descriptive)
+
+```{r figures}
+cols2 <- c("Reef" = "#E8745B", "Sandy" = "#1FB6B6")
+theme_pub <- theme_minimal(base_size = 12) +
+  theme(panel.grid = element_blank(),
+        axis.line = element_line(colour="grey25", linewidth=0.4),
+        axis.ticks = element_line(colour="grey25", linewidth=0.4), legend.position = "bottom")
+sv <- function(name,p,w=6.5,h=4.2) ggsave(here("figures", paste0(name,".png")), p, width=w, height=h, dpi=300)
+
+# Figure 1 -- sampling design: deployments by date and site (each point = one deployment)
+sv("v6_Fig1_design",
+  ggplot(meta, aes(date, site, colour = site)) +
+    geom_point(size = 3.4, alpha = 0.85) +
+    scale_colour_manual(values = cols2, guide = "none") +
+    scale_x_date(date_labels = "%b", date_breaks = "1 month") +
+    labs(x = "2024", y = NULL) + theme_pub)
+
+# Figure 2 -- per-deployment richness by site (all 18 deployments shown)
+nlab <- function(s){ tb <- table(meta$site); function(b) paste0(b, "\n(n = ", tb[b], ")") }
+sv("v6_Fig2_richness",
+  ggplot(meta, aes(site, richness, fill = site)) +
+    geom_boxplot(outlier.shape = NA, width = 0.55, alpha = 0.5) +
+    geom_jitter(width = 0.12, height = 0, size = 2.4, alpha = 0.85, aes(colour = site)) +
+    scale_fill_manual(values = cols2, guide="none") + scale_colour_manual(values = cols2, guide="none") +
+    scale_x_discrete(labels = nlab()) +
+    labs(x = NULL, y = "Teleost species per deployment") + theme_pub, w=6, h=4.2)
+
+# Figure 3 -- frequency of occurrence (%) of the most frequent species, by site
+topsp <- spp_tab |> filter(freq_Reef + freq_Sandy > 0) |> slice_max(freq_Reef + freq_Sandy, n = 12)
+occ <- topsp |> select(common, pct_Reef, pct_Sandy) |>
+  pivot_longer(c(pct_Reef, pct_Sandy), names_to="site", values_to="pct") |>
+  mutate(site = recode(site, pct_Reef="Reef", pct_Sandy="Sandy"),
+         common = factor(common, levels = rev(topsp$common)))
+sv("v6_Fig3_occurrence",
+  ggplot(occ, aes(common, pct, fill = site)) +
+    geom_col(position = position_dodge(0.7), width = 0.62) + coord_flip() +
+    scale_fill_manual(values = cols2, name = "Site") +
+    labs(x = NULL, y = "Frequency of occurrence (% of deployments)") + theme_pub, w=6.5, h=4.6)
+
+# Figure 4 (exploratory) -- deployment x species MaxN heatmap; no inferential content
+hd <- as.data.frame(biota) |> rownames_to_column("dep") |>
+  pivot_longer(-dep, names_to="species", values_to="maxN") |>
+  left_join(lookup |> select(species, common), by="species") |>
+  left_join(meta |> mutate(dep=as.character(dep)) |> select(dep, site), by="dep") |>
+  filter(species %in% topsp$species) |>
+  mutate(common = factor(common, levels = rev(topsp$common)), dep = factor(dep, levels = meta$dep))
+sv("v6_FigS1_heatmap",
+  ggplot(hd, aes(dep, common, fill = maxN)) + geom_tile(colour="grey90") +
+    facet_grid(~site, scales="free_x", space="free_x") +
+    scale_fill_viridis_c(option="D", name="MaxN") +
+    labs(x = "Deployment", y = NULL) + theme_pub +
+    theme(axis.text.x = element_text(size=7)), w=7, h=4.6)
+cat("**Figures written: v6_Fig1_design, v6_Fig2_richness, v6_Fig3_occurrence, v6_FigS1_heatmap.**\n\n")
+```
+
+# 5. Key results and verification log
+
+```{r keyresults}
+key <- tibble(metric = c("Usable deployments","Reef deployments","Sandy deployments","Sampling dates",
+  "Zero-teleost deployments","Observed species","Families","Reef richness median","Sandy richness median",
+  "Cliff delta richness (descriptive)","Total chapters aggregated"),
+  value = c(nrow(meta), nR, nS, dplyr::n_distinct(meta$date), n_zero_dep, n_obs_species, n_families,
+            site_summ$richness_median[site_summ$Site=="Reef"], site_summ$richness_median[site_summ$Site=="Sandy"],
+            round(cliff_rich,2), nrow(cw)))
+readr::write_csv(key, here("output","v6_key_results.csv"))
+cat("**Key results (single source of truth for the manuscript).**\n\n"); print(knitr::kable(key))
+
+writeLines(c(paste0("BRUV 2024 deployment-level analysis -- verification log (", Sys.Date(), ")"),
+             "", unlist(verif),
+             "", "Observational unit = deployment (NOT video chapter). MaxN = max across chapters.",
+             "Design = one fixed reef site + one fixed sandy site; descriptive, site-specific; no habitat/MPA/seasonal inference."),
+           here("output","v6_VERIFICATION_LOG.txt"))
+cat("\n**All verification checks PASSED.**\n\n"); cat(paste0("- ", verif, collapse="\n"), "\n")
+```

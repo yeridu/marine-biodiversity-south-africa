@@ -1,0 +1,17 @@
+BRUV 2024 deployment-level analysis -- verification log (2026-06-24)
+
+[PASS] Chapter rows read = 98 (expected 98)
+[PASS] Deployments after crosswalk = 18 (expected 18)
+[PASS] Site split = 14 Jacob's Reef / 4 Meidebank
+[PASS] Every chapter maps to exactly one deployment
+[PASS] Derived crosswalk matches Hanna's Table 1 exactly (date/site/suffix/chapter count)
+[PASS] Two distinct 0105 deployments retained (Meidebank GX vs Jacob's GH)
+[PASS] 0101 and 0102 are separate deployments
+[PASS] Deployment-level matrix has 18 rows, 25 species (got 18x25)
+[PASS] No Row-ID / metadata column in the species matrix
+[PASS] Deployment MaxN == max(chapter MaxN) for all deployment x species (0 discrepancies)
+[PASS] Worked example: Dep 0084 White steenbras MaxN = 4 (sum would be 9)
+[PASS] Biological-zero deployments 0071 and 0085 present and all-zero
+
+Observational unit = deployment (NOT video chapter). MaxN = max across chapters.
+Design = one fixed reef site + one fixed sandy site; descriptive, site-specific; no habitat/MPA/seasonal inference.

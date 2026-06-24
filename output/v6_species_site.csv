@@ -1,0 +1,26 @@
+species,common,family,status,freq_Reef,pct_Reef,maxN_Reef,freq_Sandy,pct_Sandy,maxN_Sandy,total_MaxN
+Sarpa salpa,Strepie,Sparidae,LC,8,57,14.5,2,50,25,303
+Diplodus capensis,Blacktail,Sparidae,LC,7,50,9.07,2,50,6.75,154
+Spondyliosoma emarginatum,Steentjie,Sparidae,LC,7,50,7.5,0,0,0,105
+Pomadasys olivaceum,Pinky,Haemulidae,LC,4,29,4.29,0,0,0,60
+Chrysoblephus laticeps,Roman,Sparidae,LC,7,50,3.43,2,50,1.75,55
+Rhabdosargus globiceps,White stumpnose,Sparidae,VU,7,50,3.86,0,0,0,54
+Boopsoidea inornata,Fransmadam,Sparidae,LC,4,29,3.07,0,0,0,43
+Lithognathus mormyrus,Sand steenbras,Sparidae,LC,5,36,2.93,0,0,0,41
+Liza dumerili,Southern mullet,Mugilidae,LC,0,0,0,1,25,10.25,41
+Rhabdosargus sarba,Natal stumpnose,Sparidae,LC,4,29,2.64,0,0,0,37
+Rhabdosargus holubi,Cape stumpnose,Sparidae,LC,3,21,1.71,0,0,0,24
+Lithognathus lithognathus,White steenbras,Sparidae,EN,5,36,1.64,1,25,0.25,24
+Mugil cephalus,Flathead mullet,Mugilidae,LC,0,0,0,1,25,4.25,17
+Cheimerius nufar,Santer,Sparidae,DD,2,14,0.79,0,0,0,11
+Galeichthys feliceps,White sea catfish,Ariidae,LC,3,21,0.71,0,0,0,10
+Clinus superciliosus,Super klipfish,Clinidae,LC,2,14,0.64,0,0,0,9
+Cheilodactylus fasciatus,Redfingers,Cheilodactylidae,LC,4,29,0.64,0,0,0,9
+Chirodactylus brachydactylus,Twotone fingerfin,Chirodactylidae,LC,3,21,0.57,0,0,0,8
+Pachymetopon aeneum,Blue hottentot,Sparidae,LC,1,7,0.43,0,0,0,6
+Amblyrhynchotes honckenii,Evileye blaasop,Tetraodontidae,LC,3,21,0.36,0,0,0,5
+Argyrozona argyrozona,Carpenter,Sparidae,LC,2,14,0.29,0,0,0,4
+Dichistius multifasciatus,Banded galjoen,Dichistiidae,LC,1,7,0.14,0,0,0,2
+Gymnocrotaphus curvidens,Janbruin,Sparidae,LC,1,7,0.14,0,0,0,2
+Diplodus hottentotus,Zebra,Sparidae,LC,1,7,0.07,0,0,0,1
+Caffrogobius nudiceps,Barehead goby,Gobiidae,LC,1,7,0.07,0,0,0,1
